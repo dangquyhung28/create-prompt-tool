@@ -11,6 +11,7 @@ const MODEL_NAME = 'gemini-2.5-flash';
 
 export type Scene = {
   Objective: string;
+  Objective_vi?: string;
   Persona: {
     Role: string;
     Tone: string;
@@ -104,6 +105,7 @@ Rules:
 Scene Object Schema (for each scene_N):
 {
   "Objective": string,
+  "Objective_vi": string,              // 1 câu tóm tắt ngắn gọn bằng tiếng Việt
   "Persona": { "Role": string, "Tone": string, "Knowledge_Level": string },
   "Task_Instructions": string[],
   "Constraints": string[],
