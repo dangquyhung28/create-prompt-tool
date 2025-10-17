@@ -1,10 +1,8 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
+const getAiClient = (apiKey: string) => {
   if (!apiKey) {
-    throw new Error("API_KEY environment variable not set. Please set it to use the Gemini API.");
+    throw new Error("API Key not provided. Please set it in the Settings tab.");
   }
   return new GoogleGenAI({ apiKey });
 }
@@ -14,11 +12,12 @@ const MODEL_NAME = 'gemini-2.5-flash';
 /**
  * Generates a refined prompt based on a user's request using a meta-prompting technique.
  * @param userRequest The user's description of what they want the AI to do.
+ * @param apiKey The user's Gemini API key.
  * @returns A well-structured prompt string.
  */
-export const generatePromptFromRequest = async (userRequest: string): Promise<string> => {
+export const generatePromptFromRequest = async (userRequest: string, apiKey: string): Promise<string> => {
   try {
-    const ai = getAiClient();
+    const ai = getAiClient(apiKey);
     const metaPrompt = `
       You are an expert prompt engineer for large language models.
       Based on the following user request, create a detailed, effective, and clear prompt.
@@ -40,7 +39,7 @@ export const generatePromptFromRequest = async (userRequest: string): Promise<st
     console.error("Error in generatePromptFromRequest:", error);
     if (error instanceof Error) {
         if(error.message.includes('API key not valid')) {
-            throw new Error('The provided API key is not valid. Please check your environment configuration.');
+            throw new Error('The provided API key is not valid. Please check it in the Settings tab.');
         }
         throw new Error(`Failed to generate prompt: ${error.message}`);
     }
@@ -51,11 +50,12 @@ export const generatePromptFromRequest = async (userRequest: string): Promise<st
 /**
  * Sends a generated prompt to the Gemini API to get a test result.
  * @param generatedPrompt The prompt to be tested.
+ * @param apiKey The user's Gemini API key.
  * @returns The AI's response to the prompt.
  */
-export const testGeneratedPrompt = async (generatedPrompt: string): Promise<string> => {
+export const testGeneratedPrompt = async (generatedPrompt: string, apiKey: string): Promise<string> => {
   try {
-    const ai = getAiClient();
+    const ai = getAiClient(apiKey);
     const response = await ai.models.generateContent({
         model: MODEL_NAME,
         contents: generatedPrompt,
@@ -66,7 +66,7 @@ export const testGeneratedPrompt = async (generatedPrompt: string): Promise<stri
     console.error("Error in testGeneratedPrompt:", error);
      if (error instanceof Error) {
         if(error.message.includes('API key not valid')) {
-            throw new Error('The provided API key is not valid. Please check your environment configuration.');
+            throw new Error('The provided API key is not valid. Please check it in the Settings tab.');
         }
         throw new Error(`Failed to test prompt: ${error.message}`);
     }
