@@ -1,18 +1,17 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { generatePromptFromRequest, testGeneratedPrompt } from './services/geminiService';
-import { CopyIcon, SparklesIcon, CheckIcon, PlayIcon, ExclamationTriangleIcon, CogIcon, SaveIcon } from './components/Icons';
+import { generatePromptFromRequest } from './services/geminiService';
+import { CopyIcon, SparklesIcon, CheckIcon, ExclamationTriangleIcon, CogIcon, SaveIcon, DownloadIcon } from './components/Icons';
 import { Spinner } from './components/Spinner';
 
 type Tab = 'architect' | 'settings';
 
 const App: React.FC = () => {
-  const [userRequest, setUserRequest] = useState<string>('');
-  const [generatedPrompt, setGeneratedPrompt] = useState<string>('');
-  const [testResult, setTestResult] = useState<string>('');
+  const [videoIdea, setVideoIdea] = useState<string>('');
+  const [videoDuration, setVideoDuration] = useState<string>('');
+  const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [isTesting, setIsTesting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isCopied, setIsCopied] = useState<boolean>(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('architect');
   const [apiKey, setApiKey] = useState<string>('');
   const [tempApiKey, setTempApiKey] = useState<string>('');
@@ -43,57 +42,44 @@ const App: React.FC = () => {
       setError('Please set your API key in the Settings tab first.');
       return;
     }
-    if (!userRequest.trim()) {
-      setError('Please enter a request to generate a prompt.');
+    if (!videoIdea.trim() || !videoDuration.trim()) {
+      setError('Please provide both a video idea and the desired duration.');
       return;
     }
     setIsGenerating(true);
     setError(null);
-    setGeneratedPrompt('');
-    setTestResult('');
+    setGeneratedPrompts([]);
 
     try {
-      const prompt = await generatePromptFromRequest(userRequest, apiKey);
-      setGeneratedPrompt(prompt);
+      const prompts = await generatePromptFromRequest(videoIdea, videoDuration, apiKey);
+      setGeneratedPrompts(prompts);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred during prompt generation.');
       console.error(err);
     } finally {
       setIsGenerating(false);
     }
-  }, [userRequest, apiKey]);
+  }, [videoIdea, videoDuration, apiKey]);
 
-  const handleTestPrompt = useCallback(async () => {
-     if (!apiKey) {
-      setError('Please set your API key in the Settings tab first.');
-      return;
-    }
-    if (!generatedPrompt.trim()) {
-      setError('Please generate a prompt before testing.');
-      return;
-    }
-    setIsTesting(true);
-    setError(null);
-    setTestResult('');
+  const handleCopy = useCallback((text: string, index: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  }, []);
 
-    try {
-      const result = await testGeneratedPrompt(generatedPrompt, apiKey);
-      setTestResult(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred while testing the prompt.');
-      console.error(err);
-    } finally {
-      setIsTesting(false);
-    }
-  }, [generatedPrompt, apiKey]);
-
-  const handleCopy = useCallback(() => {
-    if (generatedPrompt) {
-      navigator.clipboard.writeText(generatedPrompt);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2000);
-    }
-  }, [generatedPrompt]);
+  const handleDownloadJson = () => {
+    if (generatedPrompts.length === 0) return;
+    const jsonString = JSON.stringify(generatedPrompts, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'video_prompts.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
   
   const TabButton: React.FC<{tabName: Tab, icon: React.ReactNode, label: string}> = ({tabName, icon, label}) => (
     <button
@@ -147,68 +133,84 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Left Column: User Input */}
               <div className="bg-white p-6 rounded-xl shadow-lg flex flex-col h-full">
-                <h2 className="text-xl font-semibold mb-4 text-slate-700">1. Describe Your Goal</h2>
-                <p className="text-slate-500 mb-4 text-sm">Explain what you want the AI to do. Be as specific as possible. For example: "Create three marketing slogans for a new brand of eco-friendly coffee."</p>
-                <textarea
-                  className="w-full flex-grow p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200 resize-none min-h-[200px]"
-                  placeholder="Enter your request here..."
-                  value={userRequest}
-                  onChange={(e) => setUserRequest(e.target.value)}
-                  disabled={isGenerating || !apiKey}
-                />
+                <h2 className="text-xl font-semibold mb-4 text-slate-700">1. Describe Your Video</h2>
+                <p className="text-slate-500 mb-4 text-sm">Provide your core idea and the desired video length. The tool will generate a sequence of prompts (1 prompt ≈ 8 seconds of video).</p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="video-idea" className="block text-sm font-medium text-slate-700 mb-1">Video Idea</label>
+                    <textarea
+                      id="video-idea"
+                      className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200 resize-none min-h-[150px]"
+                      placeholder="e.g., A cinematic time-lapse of a flower blooming in a futuristic city"
+                      value={videoIdea}
+                      onChange={(e) => setVideoIdea(e.target.value)}
+                      disabled={isGenerating || !apiKey}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="video-duration" className="block text-sm font-medium text-slate-700 mb-1">Desired Duration</label>
+                    <input
+                      id="video-duration"
+                      type="text"
+                      className="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200"
+                      placeholder="e.g., 15 seconds, 1 minute, 2m 30s"
+                      value={videoDuration}
+                      onChange={(e) => setVideoDuration(e.target.value)}
+                      disabled={isGenerating || !apiKey}
+                    />
+                  </div>
+                </div>
+
                 <button
                   onClick={handleGeneratePrompt}
-                  disabled={isGenerating || !userRequest.trim() || !apiKey}
-                  className="mt-4 w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-105"
+                  disabled={isGenerating || !videoIdea.trim() || !videoDuration.trim() || !apiKey}
+                  className="mt-6 w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-105"
                 >
                   {isGenerating ? <Spinner /> : <SparklesIcon className="w-5 h-5" />}
-                  <span>{isGenerating ? 'Generating...' : 'Generate Prompt'}</span>
+                  <span>{isGenerating ? 'Generating...' : 'Generate Prompts'}</span>
                 </button>
               </div>
 
-              {/* Right Column: Generated Prompt & Test Result */}
-              <div className="space-y-8">
-                <div className="bg-white p-6 rounded-xl shadow-lg flex flex-col">
-                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-semibold text-slate-700">2. Generated Prompt</h2>
-                    <button
-                        onClick={handleCopy}
-                        disabled={!generatedPrompt || isCopied}
-                        className="flex items-center gap-2 text-sm bg-slate-200 hover:bg-slate-300 disabled:bg-slate-100 text-slate-700 font-medium py-1 px-3 rounded-md transition"
-                        title="Copy to clipboard"
-                    >
-                        {isCopied ? <CheckIcon className="w-4 h-4 text-green-600" /> : <CopyIcon className="w-4 h-4" />}
-                        <span>{isCopied ? 'Copied!' : 'Copy'}</span>
-                    </button>
-                  </div>
-                  <textarea
-                    className="w-full h-48 p-4 border border-slate-300 rounded-lg bg-slate-50 font-mono text-sm resize-none"
-                    placeholder="Your generated prompt will appear here..."
-                    value={generatedPrompt}
-                    readOnly
-                  />
-                   <button
-                      onClick={handleTestPrompt}
-                      disabled={isTesting || !generatedPrompt.trim() || !apiKey}
-                      className="mt-4 w-full flex items-center justify-center gap-2 bg-slate-700 text-white font-semibold py-3 px-6 rounded-lg hover:bg-slate-800 disabled:bg-slate-400 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-105"
-                    >
-                      {isTesting ? <Spinner /> : <PlayIcon className="w-5 h-5" />}
-                      <span>{isTesting ? 'Testing...' : 'Test Prompt'}</span>
-                    </button>
+              {/* Right Column: Generated Prompts */}
+              <div className="bg-white p-6 rounded-xl shadow-lg flex flex-col">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-semibold text-slate-700">2. Generated Video Prompts</h2>
+                  <button
+                      onClick={handleDownloadJson}
+                      disabled={generatedPrompts.length === 0}
+                      className="flex items-center gap-2 text-sm bg-slate-200 hover:bg-slate-300 disabled:bg-slate-100 text-slate-700 font-medium py-1 px-3 rounded-md transition"
+                      title="Download prompts as JSON"
+                  >
+                      <DownloadIcon className="w-4 h-4" />
+                      <span>Download JSON</span>
+                  </button>
                 </div>
-
-                <div className="bg-white p-6 rounded-xl shadow-lg flex flex-col">
-                  <h2 className="text-xl font-semibold mb-4 text-slate-700">3. Test Result</h2>
-                  <div className="w-full min-h-[150px] p-4 border border-slate-300 rounded-lg bg-slate-50 overflow-y-auto whitespace-pre-wrap">
-                    {isTesting ? (
-                        <div className="flex items-center justify-center h-full text-slate-500">
-                          <Spinner />
-                          <span className="ml-2">Awaiting response from Gemini...</span>
-                        </div>
-                    ) : (
-                        testResult || <span className="text-slate-400">Test results will appear here.</span>
-                    )}
-                  </div>
+                <div className="w-full flex-grow border border-slate-200 rounded-lg bg-slate-50 min-h-[300px] overflow-y-auto p-2">
+                  {generatedPrompts.length > 0 ? (
+                     <div className="space-y-3">
+                        {generatedPrompts.map((prompt, index) => (
+                          <div key={index} className="bg-white p-3 rounded-md shadow-sm border border-slate-200">
+                              <div className="flex justify-between items-start gap-2">
+                                <p className="flex-grow font-mono text-sm text-slate-800">
+                                  <span className="font-semibold text-indigo-600">[{index + 1}/{generatedPrompts.length}]</span> {prompt}
+                                </p>
+                                <button
+                                  onClick={() => handleCopy(prompt, index)}
+                                  className="flex-shrink-0 flex items-center gap-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium py-1 px-2 rounded-md transition"
+                                >
+                                  {copiedIndex === index ? <CheckIcon className="w-3 h-3 text-green-600" /> : <CopyIcon className="w-3 h-3" />}
+                                  {copiedIndex === index ? 'Copied' : 'Copy'}
+                                </button>
+                              </div>
+                          </div>
+                        ))}
+                     </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-slate-500">
+                      Your generated video prompts will appear here...
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

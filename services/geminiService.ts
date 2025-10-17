@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const getAiClient = (apiKey: string) => {
   if (!apiKey) {
@@ -10,66 +10,112 @@ const getAiClient = (apiKey: string) => {
 const MODEL_NAME = 'gemini-2.5-flash';
 
 /**
- * Generates a refined prompt based on a user's request using a meta-prompting technique.
- * @param userRequest The user's description of what they want the AI to do.
- * @param apiKey The user's Gemini API key.
- * @returns A well-structured prompt string.
+ * Parses a duration string (e.g., "1 minute", "30s", "1 phút") into total seconds.
+ * Supports English and Vietnamese units.
+ * @param durationStr The input string for duration.
+ * @returns The total number of seconds.
  */
-export const generatePromptFromRequest = async (userRequest: string, apiKey: string): Promise<string> => {
+const parseDurationToSeconds = (durationStr: string): number => {
+    const cleanStr = durationStr.trim().toLowerCase().replace(',', '.');
+    let totalSeconds = 0;
+    let unitFound = false;
+
+    // Regex to find all number-unit pairs.
+    // Units: m, min, minute(s), phút (minutes) | s, sec, second(s), giây (seconds)
+    const matches = cleanStr.matchAll(/(\d+(\.\d+)?)\s*(m|min|minute|minutes|phút|s|sec|second|seconds|giây)/g);
+
+    for (const match of matches) {
+        unitFound = true;
+        const value = parseFloat(match[1]);
+        const unit = match[3];
+
+        if (['m', 'min', 'minute', 'minutes', 'phút'].includes(unit)) {
+            totalSeconds += value * 60;
+        } else { // s, sec, second, seconds, giây
+            totalSeconds += value;
+        }
+    }
+
+    // If no units were found in the string, assume the entire string is a number in seconds.
+    if (!unitFound) {
+        const plainNumber = parseFloat(cleanStr);
+        if (!isNaN(plainNumber) && isFinite(plainNumber)) {
+            totalSeconds = plainNumber;
+        }
+    }
+
+    if (isNaN(totalSeconds) || totalSeconds <= 0) {
+        throw new Error("Invalid duration format. Please use formats like '30s', '1 minute', '2m 15s', '1 phút'.");
+    }
+
+    return totalSeconds;
+};
+
+
+/**
+ * Generates a sequence of refined prompts for a text-to-video model.
+ * @param videoIdea The user's core video concept.
+ * @param videoDuration The user's desired video length string.
+ * @param apiKey The user's Gemini API key.
+ * @returns A promise that resolves to an array of well-structured prompt strings.
+ */
+export const generatePromptFromRequest = async (videoIdea: string, videoDuration: string, apiKey: string): Promise<string[]> => {
   try {
+    const totalSeconds = parseDurationToSeconds(videoDuration);
+    const promptsToGenerate = Math.ceil(totalSeconds / 8);
+
     const ai = getAiClient(apiKey);
     const metaPrompt = `
-      You are an expert prompt engineer for large language models.
-      Based on the following user request, create a detailed, effective, and clear prompt.
-      The prompt should be structured to elicit the best possible response from an AI model.
-      Ensure the prompt is self-contained and ready to be used directly.
+      You are a creative and experienced video script supervisor AI. Your task is to take a user's video idea and break it down into a sequence of scenes for a text-to-video generation model.
 
-      User Request: "${userRequest}"
+      **Rules:**
+      1.  You will be given a "Video Idea" and a target "Number of Prompts".
+      2.  Each prompt you generate should correspond to roughly 8 seconds of video footage.
+      3.  The sequence of prompts MUST tell a coherent and continuous story, flowing logically from one to the next.
+      4.  Each prompt should be a detailed, single paragraph describing the visuals, camera actions (e.g., "pan left", "dolly zoom", "close-up"), style (e.g., "cinematic", "vaporwave", "hyperrealistic"), and mood.
+      5.  Maintain a consistent style and subject across all prompts unless the idea specifies a change.
+      6.  The final output must be a JSON array of strings, where each string is a complete prompt. Do not include any other text or explanation outside the JSON array.
 
-      Generated Prompt:
+      **User Input:**
+      *   Video Idea: "${videoIdea}"
+      *   Number of Prompts to Generate: ${promptsToGenerate}
+
+      Generate the JSON array of prompts now.
     `;
 
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: metaPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.STRING,
+            description: 'A single, detailed prompt for one scene of the video.'
+          }
+        }
+      }
     });
     
-    return response.text.trim();
+    // The response.text is a JSON string, so we parse it.
+    const jsonString = response.text.trim();
+    const parsedPrompts = JSON.parse(jsonString);
+
+    if (!Array.isArray(parsedPrompts) || !parsedPrompts.every(p => typeof p === 'string')) {
+      throw new Error('The AI did not return the expected format. Please try again.');
+    }
+    
+    return parsedPrompts;
+
   } catch (error) {
     console.error("Error in generatePromptFromRequest:", error);
     if (error instanceof Error) {
         if(error.message.includes('API key not valid')) {
             throw new Error('The provided API key is not valid. Please check it in the Settings tab.');
         }
-        throw new Error(`Failed to generate prompt: ${error.message}`);
+        throw new Error(`Failed to generate prompts: ${error.message}`);
     }
-    throw new Error("An unknown error occurred while generating the prompt.");
-  }
-};
-
-/**
- * Sends a generated prompt to the Gemini API to get a test result.
- * @param generatedPrompt The prompt to be tested.
- * @param apiKey The user's Gemini API key.
- * @returns The AI's response to the prompt.
- */
-export const testGeneratedPrompt = async (generatedPrompt: string, apiKey: string): Promise<string> => {
-  try {
-    const ai = getAiClient(apiKey);
-    const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: generatedPrompt,
-    });
-
-    return response.text.trim();
-  } catch (error) {
-    console.error("Error in testGeneratedPrompt:", error);
-     if (error instanceof Error) {
-        if(error.message.includes('API key not valid')) {
-            throw new Error('The provided API key is not valid. Please check it in the Settings tab.');
-        }
-        throw new Error(`Failed to test prompt: ${error.message}`);
-    }
-    throw new Error("An unknown error occurred while testing the prompt.");
+    throw new Error("An unknown error occurred while generating prompts.");
   }
 };
