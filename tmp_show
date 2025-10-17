@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const getAiClient = (apiKey: string) => {
   if (!apiKey) {
@@ -8,32 +8,6 @@ const getAiClient = (apiKey: string) => {
 }
 
 const MODEL_NAME = 'gemini-2.5-flash';
-
-export type Scene = {
-  Objective: string;
-  Persona: {
-    Role: string;
-    Tone: string;
-    Knowledge_Level: string;
-  };
-  Task_Instructions: string[];
-  Constraints: string[];
-  Input_Examples: Array<{
-    Input: string;
-    Expected_Output: string;
-  }>;
-  Output_Format: {
-    Type: string;
-    Structure: {
-      character_details: string;
-      setting_details: string;
-      key_action: string;
-      camera_direction: string;
-    };
-  };
-};
-
-export type SceneMap = Record<string, Scene>;
 
 /**
  * Parses a duration string (e.g., "1 minute", "30s", "1 phút") into total seconds.
@@ -85,69 +59,54 @@ const parseDurationToSeconds = (durationStr: string): number => {
  * @param apiKey The user's Gemini API key.
  * @returns A promise that resolves to an array of well-structured prompt strings.
  */
-export const generatePromptFromRequest = async (videoIdea: string, videoDuration: string, apiKey: string): Promise<SceneMap> => {
+export const generatePromptFromRequest = async (videoIdea: string, videoDuration: string, apiKey: string): Promise<string[]> => {
   try {
     const totalSeconds = parseDurationToSeconds(videoDuration);
     const promptsToGenerate = Math.ceil(totalSeconds / 8);
 
     const ai = getAiClient(apiKey);
     const metaPrompt = `
-You are an expert cinematic prompt architect. Take the user's video idea and split it into a sequence of scenes for a text-to-video model.
+      You are a creative and experienced video script supervisor AI. Your task is to take a user's video idea and break it down into a sequence of scenes for a text-to-video generation model.
 
-Rules:
-1) Generate exactly ${promptsToGenerate} scenes; each scene describes ~8 seconds of footage (total ≈ ${promptsToGenerate * 8}s).
-2) Maintain strict character continuity. For any recurring character, repeat a consistent, explicit description in every scene's Output_Format.Structure.character_details. Do not assume prior memory.
-3) Maintain a coherent story and visual continuity from one scene to the next.
-4) Keep photorealistic, 4K, cinematic style throughout unless the idea specifies otherwise.
-5) Output MUST be a single JSON object with keys "scene_1".."scene_${promptsToGenerate}", no extra text.
+      **Rules:**
+      1.  You will be given a "Video Idea" and a target "Number of Prompts".
+      2.  Each prompt you generate should correspond to roughly 8 seconds of video footage.
+      3.  The sequence of prompts MUST tell a coherent and continuous story, flowing logically from one to the next.
+      4.  Each prompt should be a detailed, single paragraph describing the visuals, camera actions (e.g., "pan left", "dolly zoom", "close-up"), style (e.g., "cinematic", "vaporwave", "hyperrealistic"), and mood.
+      5.  Maintain a consistent style and subject across all prompts unless the idea specifies a change.
+      6.  The final output must be a JSON array of strings, where each string is a complete prompt. Do not include any other text or explanation outside the JSON array.
 
-Scene Object Schema (for each scene_N):
-{
-  "Objective": string,
-  "Persona": { "Role": string, "Tone": string, "Knowledge_Level": string },
-  "Task_Instructions": string[],
-  "Constraints": string[],
-  "Input_Examples": [{ "Input": string, "Expected_Output": string }],
-  "Output_Format": {
-    "Type": "video/mp4",
-    "Structure": {
-      "character_details": string,        // Repeat full character description here for consistency
-      "setting_details": string,
-      "key_action": string,
-      "camera_direction": string
-    }
-  }
-}
+      **User Input:**
+      *   Video Idea: "${videoIdea}"
+      *   Number of Prompts to Generate: ${promptsToGenerate}
 
-User Input:
-- Video Idea: """${videoIdea}"""
-
-Return only the JSON object described above. No markdown, no prose, no code fences.
-`;
+      Generate the JSON array of prompts now.
+    `;
 
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
       contents: metaPrompt,
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.STRING,
+            description: 'A single, detailed prompt for one scene of the video.'
+          }
+        }
       }
     });
     
     // The response.text is a JSON string, so we parse it.
     const jsonString = response.text.trim();
-    const parsed = JSON.parse(jsonString);
+    const parsedPrompts = JSON.parse(jsonString);
 
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Unexpected AI response: expected a JSON object with scene_* keys.');
+    if (!Array.isArray(parsedPrompts) || !parsedPrompts.every(p => typeof p === 'string')) {
+      throw new Error('The AI did not return the expected format. Please try again.');
     }
-
-    const keys = Object.keys(parsed as Record<string, unknown>);
-    const hasSceneKey = keys.some(k => /^scene_\d+$/.test(k));
-    if (!hasSceneKey) {
-      throw new Error('AI response missing expected scene_N keys.');
-    }
-
-    return parsed as SceneMap;
+    
+    return parsedPrompts;
 
   } catch (error) {
     console.error("Error in generatePromptFromRequest:", error);
@@ -155,8 +114,8 @@ Return only the JSON object described above. No markdown, no prose, no code fenc
         if(error.message.includes('API key not valid')) {
             throw new Error('The provided API key is not valid. Please check it in the Settings tab.');
         }
-        throw new Error(`Failed to generate scenes: ${error.message}`);
+        throw new Error(`Failed to generate prompts: ${error.message}`);
     }
-    throw new Error("An unknown error occurred while generating scenes.");
+    throw new Error("An unknown error occurred while generating prompts.");
   }
 };
